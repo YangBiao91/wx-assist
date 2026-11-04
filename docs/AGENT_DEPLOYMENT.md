@@ -2,6 +2,22 @@
 
 目标：在用户授权的 Windows 电脑上，把本项目部署为指定群的文字监控；让规则、通知和恢复行为都有可检查的结果。agent 应自主处理普通、可恢复的环境和代码问题，按工具的权限要求操作，不能用“进程启动了”替代部署验收。
 
+## 用户需要提供的信息
+
+用户先提供业务目标和通知偏好，技术细节由 agent 在本机核对：
+
+| 用户先告诉 agent | 示例 |
+| --- | --- |
+| 操作哪台电脑、监控哪个群 | 当前连接的 Windows 电脑；一个完整群名，同名时补充识别信息 |
+| 什么消息需要提醒 | 关键词、排除词；若有价格等条件，写清币种、规格和严格边界 |
+| 提醒发到哪里 | 唯一收件邮箱；选用哪个经典 Outlook 发件账户 |
+| 是否长期运行与登录自启 | 持续监控是否开启；监控、微信、Outlook 哪些需要登录自启 |
+| 是否已有本地读取准备 | 已有授权文件则给本地路径；没有则由 agent 说明需要用户在本机配合的步骤 |
+
+用户配合完成微信／Outlook 登录和必要授权，不需要在对话中粘贴密码或数据库密钥。Python、安装路径、内部群 ID 和配置文件由 agent 在允许范围内定位；找不到或群名有歧义时再集中询问。
+
+例如“ON 5 磅低于 580 元、熊猫 5 磅低于 400 元，出现超好价也提醒，发到我的邮箱”可以交给 agent 转成已有业务适配器，而不是要求用户先写 JSON。完整案例见 [补剂群优惠邮件提醒](EXAMPLES.md#supplement-alert-example)。
+
 ## 可直接复制的任务模板
 
 把占位项补齐后发给能够访问目标 Windows 电脑、终端和必要应用的 agent：
@@ -10,12 +26,12 @@
 请部署 https://github.com/YangBiao91/wx-assist 的 group-chat-monitor 分支。
 先读 AGENTS.md、docs/AGENT_DEPLOYMENT.md 和 monitor/README.md。
 
-目标 Windows 目录：<本地目录>
+目标 Windows 目录：<可选；未指定时由 agent 选择合适的项目目录>
 允许监控的唯一微信群：<群名；若已知请补内部 @chatroom ID>
 匹配需求：<例如：考试安排、报名截止、提交材料；排除已取消>
 发件账户：<已登录经典 Outlook 的邮箱>
 唯一收件地址：<我的收件邮箱>
-已有授权的微信凭据文件：<仅给本地路径，不在对话中贴密钥>
+已有授权的微信凭据文件：<有则给本地路径；没有则先说明需要我在本机配合什么>
 已授权的操作：在项目虚拟环境安装官方依赖、创建被 Git 忽略的本地配置，
 按上述范围进行只读群消息检查，并向上述邮箱发一封明确标注的合成测试邮件。
 是否授权持续提醒：<是/否>
@@ -69,11 +85,13 @@ py -3.12 -m venv .venv
 
 复制 `monitor/rules.example.json` 为 `rules.local.json`。默认所有示例关闭，只启用用户选择的条目。当前支持：`any_keywords` 任一命中，`exclude_keywords` 任一排除，顺序决定首个命中。不支持任意正则或语义分类。
 
+以上为 `generic` 模式。如果用户明确需要[补剂群案例](EXAMPLES.md#supplement-alert-example)中的品牌、5 磅规格和价格条件，选择已有 `protein_deals` 适配器；不要把 `any_keywords` 当成价格比较表达式，也不要自动叠加两种模式。其他尚未实现的结构化条件需要先说明并实现、测试相应适配器。
+
 使用 `preview_rules.py --text` 测用户认可的**合成**正例、排除例和无关例。记录期望值与实际结果；不把真实群记录当测试夹具上传。不同场景示例见 [EXAMPLES.md](EXAMPLES.md)。
 
 ### C. 本地配置与凭据
 
-按 [安装说明](../monitor/README.md#3-配置本地群和邮箱) 准备 `settings.local.json` 和 `credentials.local.env`，使用 `rule_profile=generic`。如果用户已有文件，先核对所指范围，不复制无关配置，也不覆盖现有文件。
+按 [安装说明](../monitor/README.md#3-配置本地群和邮箱) 准备 `settings.local.json` 和 `credentials.local.env`。通常使用 `rule_profile=generic`；用户选定本补剂案例时使用 `protein_deals`。如果用户已有文件，先核对所指范围，不复制无关配置，也不覆盖现有文件。
 
 `configure.py init` 必须成功；结果应显示 `email_enabled=false`、`credentials_created=false`。生成的 `single-group-scope.json` 固定唯一群；运行时重新校验该范围。单群约束在应用层，密钥本身仍是数据库级权限。
 
@@ -96,7 +114,7 @@ py -3.12 -m venv .venv
 启动 `control.py start`，至少观察两次成功轮次，并检查：
 
 - `running=true`，`state=monitoring`，`last_success` 持续推进；最近成功不超过约两个正常轮询周期。
-- `rule_profile=generic`，启用规则 ID 与用户要求一致；群哈希等于本地确认目标 ID 的 SHA256。
+- `rule_profile` 与选定方案一致：通用关键词为 `generic`，本补剂案例为 `protein_deals`；前者还应核对启用规则 ID。群哈希等于本地确认目标 ID 的 SHA256。
 - 邮件已按授权启用，`email_pending`、`email_uncertain`、`email_blocked` 及错误字段有解释。
 - 只有一个实际工作实例。Windows 虚拟环境的 `pythonw` 启动父进程与其工作子进程是一条进程链，不应简单按两个 PID 判为两个实例。
 
