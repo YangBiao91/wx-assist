@@ -287,7 +287,7 @@ def _parse_wal_frames(wal_path: Path, enc_key: bytes, mac_key: bytes):
 
 
 def merge_wal(enc_key: bytes, mac_key: bytes, main_path: Path,
-              wal_path: Path, out: bytearray) -> int:
+              wal_path: Path, out: bytearray, *, max_output_bytes: Optional[int] = None) -> int:
     """把 WAL 中的页覆盖到已解密的主库数据上，返回应用页数。"""
     applied = 0
     for page_no, plain in _parse_wal_frames(wal_path, enc_key, mac_key):
@@ -295,6 +295,8 @@ def merge_wal(enc_key: bytes, mac_key: bytes, main_path: Path,
         end = start + PAGE_SIZE
         if start < 0:
             continue
+        if max_output_bytes is not None and end > max_output_bytes:
+            raise DecryptError("Memory snapshot limit exceeded while merging WAL")
         if end > len(out):
             out.extend(b"\x00" * (end - len(out)))
         out[start:end] = plain
@@ -330,40 +332,32 @@ def _replace_with_retry(tmp: Path, dst: Path, attempts: int = 5,
 
 # ── 整库解密 ─────────────────────────────────────────────────────────
 
-def decrypt_database(
+def _decrypt_database_data(
     src: Path,
-    dst: Path,
     key_hex: str,
     *,
     merge_wal_file: bool = True,
     progress: Optional[Callable[[int, int], None]] = None,
-) -> dict:
-    """解密整个数据库文件到 ``dst``（标准明文 SQLite 库）。
+    max_output_bytes: Optional[int] = None,
+) -> tuple[bytes | bytearray, dict]:
+    """Decrypt a database into memory without creating plaintext files.
 
     Args:
         src: 加密库路径。
-        dst: 输出明文库路径。
         key_hex: ``WCDB_KEY``（64 位 hex）。
         merge_wal_file: 是否把 ``<src>-wal`` 中的新页合并进来。
         progress: 可选进度回调 ``(已完成页数, 总页数)``。
 
     Returns:
-        统计信息 dict：``pages``/``bad_pages``/``wal_pages``/``plaintext``。
+        Plaintext bytes and statistics; no filesystem writes.
     """
     key_material = parse_key(key_hex)
+    if max_output_bytes is not None and src.stat().st_size > max_output_bytes:
+        raise DecryptError("Memory snapshot limit exceeded")
 
     if is_plaintext_db(src):
-        # 已是明文：直接复制（同名 dst 旁可能残留上次打开生成的
-        # ``-wal``/``-shm``，同样要清掉，理由见下方 os.replace 处）。
         data = src.read_bytes()
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(data)
-        for suffix in ("-wal", "-shm"):
-            try:
-                os.unlink(str(dst) + suffix)
-            except OSError:
-                pass
-        return {
+        return data, {
             "pages": len(data) // PAGE_SIZE,
             "bad_pages": 0,
             "wal_pages": 0,
@@ -386,6 +380,8 @@ def decrypt_database(
         )
 
     total_pages = (file_size + PAGE_SIZE - 1) // PAGE_SIZE
+    if max_output_bytes is not None and total_pages * PAGE_SIZE > max_output_bytes:
+        raise DecryptError("Memory snapshot limit exceeded")
     # 预分配输出：避免逐页 extend 造成的反复 realloc（大库上会翻倍占用）
     out = bytearray(total_pages * PAGE_SIZE)
     bad_pages = 0
@@ -417,9 +413,28 @@ def decrypt_database(
         wal_path = Path(str(src) + "-wal")
         if wal_path.exists():
             wal_pages = merge_wal(
-                enc_key, mac_key, src, wal_path, out
+                enc_key, mac_key, src, wal_path, out, max_output_bytes=max_output_bytes,
             )
 
+    if bad_pages:
+        logger.warning("%s 有 %d 页 HMAC 校验异常（已解密但内容可能不完整）",
+                       src.name, bad_pages)
+    return out, {
+        "pages": total_pages,
+        "bad_pages": bad_pages,
+        "wal_pages": wal_pages,
+        "plaintext": False,
+    }
+
+
+def decrypt_database(
+    src: Path, dst: Path, key_hex: str, *, merge_wal_file: bool = True,
+    progress: Optional[Callable[[int, int], None]] = None,
+) -> dict:
+    """Explicit file export; the local test reader never uses this path."""
+    out, stats = _decrypt_database_data(
+        src, key_hex, merge_wal_file=merge_wal_file, progress=progress,
+    )
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_suffix(dst.suffix + ".part")
     # 上次失败可能留下同名 .part（被占用时删不掉，忽略即可）
@@ -440,29 +455,16 @@ def decrypt_database(
         except OSError:
             pass
 
-    if bad_pages:
-        logger.warning("%s 有 %d 页 HMAC 校验异常（已解密但内容可能不完整）",
-                       src.name, bad_pages)
-
-    return {
-        "pages": total_pages,
-        "bad_pages": bad_pages,
-        "wal_pages": wal_pages,
-        "plaintext": False,
-    }
+    return stats
 
 
-def decrypt_to_bytes(src: Path, key_hex: str, *, merge_wal_file: bool = True) -> bytes:
-    """解密到内存（供少量查询使用）。"""
-    tmp = src.with_suffix(src.suffix + ".mem")
-    try:
-        decrypt_database(src, tmp, key_hex, merge_wal_file=merge_wal_file)
-        return tmp.read_bytes()
-    finally:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+def decrypt_to_bytes(src: Path, key_hex: str, *, merge_wal_file: bool = True,
+                     max_output_bytes: Optional[int] = None) -> bytes:
+    """Decrypt directly into memory; never create a .mem or cache file."""
+    data, _stats = _decrypt_database_data(
+        src, key_hex, merge_wal_file=merge_wal_file, max_output_bytes=max_output_bytes,
+    )
+    return bytes(data)
 
 
 # ── 简易解密缓存（供读取层复用）─────────────────────────────────────

@@ -1,0 +1,6 @@
+{
+  "chat_id": "example@chatroom",
+  "sender": "sender@example.invalid",
+  "recipient": "recipient@example.invalid",
+  "outlook_exe": "C:\\Program Files\\Microsoft Office\\Root\\Office16\\OUTLOOK.EXE"
+}

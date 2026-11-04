@@ -1,0 +1,17 @@
+name: Local monitor synthetic tests
+on:
+  push:
+    branches: [single-group-protein-alerts]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  monitor:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --require-hashes -r monitor/requirements.lock
+      - run: python -B -m unittest discover -s monitor -p "test_*.py" -v

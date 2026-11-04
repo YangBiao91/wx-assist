@@ -60,6 +60,22 @@ logger = logging.getLogger(__name__)
 # 全表扫描 3 万余行。
 _DISPLAY_MAP_TTL_SEC = 5.0
 
+# Conservative bounds for this one-off test build; never fall back to disk.
+_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024
+_MAX_TOTAL_SNAPSHOT_BYTES = 256 * 1024 * 1024
+
+
+def _read_only_authorizer(action, arg1, arg2, _database, _source):
+    if action in (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH):
+        return sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_PRAGMA and arg2 is not None:
+        if (arg1 or "").lower() not in {
+            "table_info", "table_xinfo", "index_list", "index_info",
+            "index_xinfo", "foreign_key_list",
+        }:
+            return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
 # 说明：本模块**不对结果做任何隐式截断**。取多少条完全由调用方（以及微信
 # 数据本身）决定，与旧 DLL 实现的行为保持一致：
 #   - get_sessions / get_contacts 旧实现忽略 limit，总是返回全部
@@ -171,10 +187,9 @@ class WeChatDbReader:
         self._account_dir = Path(account_dir)
         self._db_storage = self._account_dir / "db_storage"
         self._key_hex = key_hex
-        self._cache_dir = Path(cache_dir) if cache_dir else (
-            self._account_dir / ".wxacc_read_cache"
-        )
-        self._cache = db_crypto.DecryptCache(self._cache_dir, key_hex)
+        # cache_dir remains accepted for caller compatibility, but is not used.
+        self._stamps: dict[str, tuple] = {}
+        self._snapshot_sizes: dict[str, int] = {}
         self._lock = threading.RLock()
         # 分片表名索引缓存：{db_path: {表名, ...}}
         self._table_index: dict[str, set] = {}
@@ -205,34 +220,59 @@ class WeChatDbReader:
         """记录自己的 wxid（用于判断消息是否是自己发的）。"""
         self._my_wxid = (wxid or "").strip()
 
-    def _plain_path(self, src: Path) -> Path:
-        """取明文库路径；若源库已变化，先关掉旧连接再重新解密。
-
-        Windows 下被打开的文件无法被覆盖，所以重新解密前必须释放连接，
-        否则 `os.replace` 会抛 PermissionError。
-        """
-        with self._lock:
-            if self._cache.needs_refresh(src):
-                stale_key = str(self._cache.cache_dir / src.name)
-                stale = self._conns.pop(stale_key, None)
-                if stale is not None:
-                    try:
-                        stale.close()
-                    except Exception:
-                        pass
-                self._table_index.pop(str(src), None)
-            return self._cache.ensure(src)
+    @staticmethod
+    def _source_stamp(src: Path) -> tuple:
+        main = src.stat()
+        try:
+            wal = Path(str(src) + "-wal").stat()
+            wal_stamp = (wal.st_mtime_ns, wal.st_size)
+        except FileNotFoundError:
+            wal_stamp = (0, 0)
+        return (main.st_mtime_ns, main.st_size, *wal_stamp)
 
     def _connect_raw(self, src: Path) -> sqlite3.Connection:
-        """获取（必要时创建）底层 sqlite3 连接。必须在锁内调用。"""
-        plain = self._plain_path(src)
-        cache_key = str(plain)
+        """Open a read-only in-memory snapshot. Caller must hold the lock."""
+        cache_key = str(src.resolve())
+        stamp = self._source_stamp(src)
         conn = self._conns.get(cache_key)
-        if conn is not None:
+        if conn is not None and self._stamps.get(cache_key) == stamp:
             return conn
-        conn = sqlite3.connect(str(plain), check_same_thread=False)
-        conn.row_factory = sqlite3.Row
+        if conn is not None:
+            conn.close()
+            self._conns.pop(cache_key, None)
+            self._stamps.pop(cache_key, None)
+            self._snapshot_sizes.pop(cache_key, None)
+            self._table_index.pop(str(src), None)
+        estimated = stamp[1] + stamp[3]
+        if (estimated > _MAX_SNAPSHOT_BYTES or
+                sum(self._snapshot_sizes.values()) + estimated > _MAX_TOTAL_SNAPSHOT_BYTES):
+            raise RuntimeError("Memory-only snapshot limit exceeded; disk fallback is disabled")
+        if not hasattr(sqlite3.Connection, "deserialize"):
+            raise RuntimeError("SQLite deserialize is required; disk fallback is disabled")
+        data = bytearray(db_crypto.decrypt_to_bytes(
+            src, self._key_hex, max_output_bytes=_MAX_SNAPSHOT_BYTES,
+        ))
+        if (len(data) > _MAX_SNAPSHOT_BYTES or len(data) < 100 or
+                sum(self._snapshot_sizes.values()) + len(data) > _MAX_TOTAL_SNAPSHOT_BYTES):
+            raise RuntimeError("Invalid or oversized memory snapshot")
+        if self._source_stamp(src) != stamp:
+            raise RuntimeError("Database changed while reading; retry the one-off query")
+        # A deserialized SQLite database cannot open a source WAL from disk.
+        # The encrypted WAL has already been merged by decrypt_to_bytes.
+        data[18:20] = b"\x01\x01"
+        conn = sqlite3.connect(":memory:", check_same_thread=False)
+        try:
+            conn.deserialize(data)
+            conn.execute("PRAGMA temp_store=MEMORY")
+            conn.execute("PRAGMA query_only=ON")
+            conn.set_authorizer(_read_only_authorizer)
+            conn.row_factory = sqlite3.Row
+        except Exception:
+            conn.close()
+            raise
         self._conns[cache_key] = conn
+        self._stamps[cache_key] = stamp
+        self._snapshot_sizes[cache_key] = len(data)
         return conn
 
     def _connect(self, src: Path) -> _LockedConn:
@@ -264,10 +304,11 @@ class WeChatDbReader:
                 self._conns.pop(key, None)
             self._table_index.clear()
             self._display_map = None
-            self._cache.invalidate(src)
+            self._stamps.clear()
+            self._snapshot_sizes.clear()
 
     def close(self) -> None:
-        """关闭所有连接（解密缓存文件保留，便于下次快速打开）。"""
+        """Close all in-memory snapshots; no plaintext cache files are created."""
         with self._lock:
             for conn in self._conns.values():
                 try:
@@ -275,6 +316,8 @@ class WeChatDbReader:
                 except Exception:
                     pass
             self._conns.clear()
+            self._stamps.clear()
+            self._snapshot_sizes.clear()
             self._table_index.clear()
             self._display_map = None
 

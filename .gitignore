@@ -97,3 +97,15 @@ dist/
 .gitignore
 wx-assist.exe
 wx-assist_no_rag.exe
+
+# Local single-group monitoring: no credentials, messages, state or reports in Git.
+/.venv/
+/single-group-scope.json
+/monitor/settings.local.json
+/monitor/credentials.local.env
+/monitor/mail-config.json
+/monitor/data/
+/monitor/e2e-runs/
+/monitor/synthetic-tests/
+/monitor/*-result.json
+/monitor/*-report.json
