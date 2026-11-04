@@ -25,6 +25,12 @@ def _build_offer_mail(job, now=None):
     if job.get("group_id_sha256") != GROUP_SHA256:
         raise ValueError("group_scope_mismatch")
     data = job["offer"]
+    if data.get("trigger_kind")=="rule":
+        if SETTINGS.get("rule_profile","generic")!="generic":
+            raise ValueError("alert_profile_mismatch")
+        return build_rule_mail(job)
+    if SETTINGS.get("rule_profile","generic")!="protein_deals":
+        raise ValueError("alert_profile_mismatch")
     if data.get("trigger_kind","price")=="keyword":
         return build_keyword_mail(job)
     if data.get("trigger_kind","price")!="price":
@@ -45,7 +51,7 @@ def _build_offer_mail(job, now=None):
     if link and public_link(link)!=link:
         raise ValueError("non_public_product_link")
     subject = f"[蛋白粉提醒] {data['brand']} 5磅 ¥{price:g}（低于¥{threshold}）"
-    body = (f"在已授权的指定群群中发现符合价格规则的群内报价：\n\n"
+    body = (f"在已授权的指定群中发现符合价格规则的群内报价：\n\n"
             f"品牌：{data['brand']}\n规格：单件5磅\n群内报价：人民币 {price:g} 元\n"
             f"你的规则：严格低于 {threshold} 元\n商品摘要：{title}\n"
             f"条件：{conditions}\n优惠截止：{str(data.get('expiry_label','未说明'))[:80]}\n"
@@ -53,6 +59,21 @@ def _build_offer_mail(job, now=None):
             + (f"商品链接：{link}\n" if link else "请在指定群查看原消息、店铺及完整下单条件。\n")
             + "\n群内报价未联网核价，库存、券和资格可能变化；不会替你下单。\n"
             + f"告警标识：{str(job['alert_id'])[:80]}\n")
+    return subject,body
+
+
+def build_rule_mail(job):
+    from generic_rules import validate_alert
+    data=job["offer"]
+    rule=validate_alert(data)
+    terms="、".join(data.get("matched_keywords",[]))
+    subject=f"[群聊监控] {rule['name']}"
+    body=(f"指定群的新文字消息命中规则：{rule['name']}\n"
+          f"规则标识：{rule['id']}\n命中词：{terms}\n\n"
+          f"消息片段：{data['keyword_excerpt']}\n\n"
+          f"消息时间：{time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(int(job['source_ts'])))}（电脑本地时区）\n"
+          "这是规则匹配提醒；请回到原群核对完整通知、有效期或操作要求。\n"
+          f"告警标识：{str(job['alert_id'])[:80]}\n")
     return subject,body
 
 
@@ -85,14 +106,11 @@ def build_keyword_mail(job):
 def build_test_mail(test_id):
     if not re.fullmatch(r"[0-9a-f]{32}",test_id):
         raise ValueError("invalid_test_id")
-    return (f"[测试] 蛋白粉优惠邮件链路 {test_id[:12]}",
-            "这是一封链路测试邮件，不是真实优惠，不含微信群聊天内容。\n\n"
-            "后续仅发送指定指定群群中符合以下规则的优惠摘要：\n"
-            "ON 蛋白粉单件5磅，人民币价格严格低于580元；\n"
-            "熊猫蛋白粉单件5磅，人民币价格严格低于400元。\n"
-            "另有关键词提醒：群内消息出现超好价/超好忦等已配置写法即提醒，不限制品牌价格。\n"
-            "价格、币种或规格不明确的不作为价格达标提醒。\n\n"
+    return (f"[测试] 群聊监控邮件链路 {test_id[:12]}",
+            "这是一封链路测试邮件，不含微信群聊天内容，不代表实际命中事件。\n\n"
+            f"规则配置：{SETTINGS.get('rule_profile','generic')}\n"
             f"发件账户：{SENDER}\n收件人：{RECIPIENT}\n测试标识：{test_id}\n")
+
 
 
 def build_offer_mail(job,now=None):

@@ -1,70 +1,118 @@
-# 单群蛋白粉优惠监控
+# 群聊监控：安装、配置和运行
 
-在 Windows 本地读取一个明确配置的微信群文字消息，以固定规则筛选、去重，再显示托盘通知和通过经典 Outlook 发送邮件。入口是本目录的 `control.py`；不会启动上游的桌面应用、Bot、AI、RAG 或 HTTP 服务。
+本目录提供本地群聊文字监控。默认使用通用关键词规则，适用于优惠跟踪、学校通知、团队事项等场景。[agent 部署指南](../docs/AGENT_DEPLOYMENT.md) 提供可直接交给另一个 agent 的流程。
 
-## 功能和规则
+## 1. 准备环境
 
-| 类型 | 条件 |
-| --- | --- |
-| ON 价格 | 单件明确 5 磅，人民币报价严格小于 580 元 |
-| 熊猫价格 | 单件明确 5 磅，人民币报价严格小于 400 元 |
-| 关键词 | 出现“超好价”“超好忦”（U+5FE6）“超好價”或“超好讠介／超好言介”等已实现写法 |
+需要 Windows x64、**CPython 3.12 x64**、已登录并同步本地数据的微信桌面端。邮件通知需要已登录发件账户的**经典 Outlook**。锁文件只覆盖 Windows x64 / CPython 3.12 的 wheel，不能把不同 Python 版本直接配同一份锁文件使用。
 
-关键词提醒独立于品牌、规格、价格，只表示提到该词。价格条件不明确时留在本地待核；等于 580／400 元不触发对应价格规则。没有诺特兰德／362 元产品规则。仅识别文字，不做图片 OCR、语音识别或商品网页抓取。
+另需准备唯一目标群的内部 ID（以 `@chatroom` 结尾）、微信账户目录以及已获授权的数据库密钥。只有群名还不够；存在同名群时必须确认唯一目标。密钥缺失时应先由用户完成授权的本地准备流程，本监控不会自动提取密钥。
 
-## 环境与安装
-
-需要 Windows、Python 3.13、已登录的微信桌面端、已登录发件账户的**经典 Outlook**。本地开发环境曾在微信 4.1.15.13、经典 Outlook 16.0.17932.21056 上验证；其他版本未承诺兼容。仅此监控不需要安装上游全部 AI、前端和打包依赖。
-
-从仓库根目录执行：
+从仓库根目录运行：
 
 ```powershell
-py -3.13 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --require-hashes -r monitor\requirements.lock
+.\.venv\Scripts\python.exe -B -m unittest discover -s monitor -p 'test_*.py' -q
+```
+
+先在没有 `settings.local.json` 的干净副本里运行合成测试，再配置真实环境。测试不读取真实微信、不启动 Outlook、不发邮件。安装失败时核对解释器版本、位数和官方包哈希；保留哈希校验，不改用来源不明的包。
+
+## 2. 配置规则
+
+```powershell
+Copy-Item monitor\rules.example.json monitor\rules.local.json
+```
+
+模板中的规则均为关闭状态。只开启用户选定的规则，或用以下学校通知示例替换本地副本：
+
+```json
+{
+  "rules": [
+    {
+      "id": "school-notices",
+      "name": "学校重要通知",
+      "enabled": true,
+      "any_keywords": ["考试安排", "报名截止", "停课通知", "提交材料"],
+      "exclude_keywords": ["测试消息", "已取消"]
+    }
+  ]
+}
+```
+
+`id` 为唯一的小写字母／数字／下划线／连字符标识；`name` 用于通知标题。`any_keywords` 命中任一项即符合正向条件；`exclude_keywords` 任一项出现则排除。按文件顺序选择第一条符合的启用规则，一条消息最多形成一个提醒。规则对英文大小写、全半角和零宽字符进行归一化；没有任意 Python 执行、正则表达式或 AI 语义分类功能。
+
+命中片段最多 500 字符，会去除链接、口令和部分联系信息行；这不是完整的个人信息匿名化。不会自动判断学校通知是否仍有效，也不会将截止时间创建成提醒日程。
+
+用合成文字验证，确认一条应命中、一条应排除、一条无关消息：
+
+```powershell
+.\.venv\Scripts\python.exe -B monitor\preview_rules.py --text '合成通知：报名截止为本周五'
+.\.venv\Scripts\python.exe -B monitor\preview_rules.py --text '合成通知：报名截止已取消'
+.\.venv\Scripts\python.exe -B monitor\preview_rules.py --text '合成闲聊：周末一起吃饭'
+```
+
+依次应看到 `matched: true`、`false`、`false`。预览不读取微信或发送通知。
+
+## 3. 配置本地群和邮箱
+
+```powershell
 Copy-Item monitor\settings.example.json monitor\settings.local.json
 Copy-Item monitor\credentials.example.env monitor\credentials.local.env
 ```
 
-只在本地编辑两份副本：
+只在本地编辑：
 
-- `settings.local.json`：唯一群的内部 ID（以 `@chatroom` 结尾）、发件邮箱、唯一收件邮箱、经典 Outlook 的绝对安装路径。邮箱示例不可直接使用。
-- `credentials.local.env`：此前已授权获得的 `WCDB_KEY` 和本机微信账户目录 `DB_PATH`。本监控不负责提取密钥，不包含闭源 DLL／WASM／打包程序。密钥在本地文件中为明文，属于数据库级权限；单群限制由监控代码实施。
+| 文件 | 字段 | 作用 |
+| --- | --- | --- |
+| `settings.local.json` | `rule_profile` | 通常为 `generic`；其他适配器见场景示例文档 |
+| 同上 | `chat_id` | 唯一目标群内部 ID，不能用群显示名称代替 |
+| 同上 | `sender` / `recipient` | 已登录经典 Outlook 的发件邮箱与唯一收件邮箱 |
+| 同上 | `outlook_exe` | 经典 Outlook 的绝对安装路径 |
+| `credentials.local.env` | `WCDB_KEY` | 已授权获得的 64 位十六进制数据库密钥 |
+| 同上 | `DB_PATH` | 本机微信账户目录或其数据库目录 |
 
-初始化配置并先做本地读取：
+示例地址不能直接运行。密钥在本地文件中为明文，切勿放进聊天回复、截图、Git 提交或部署报告。不要覆盖已存在的真实配置；初始化脚本遇到已有配置会停止。
 
 ```powershell
 .\.venv\Scripts\python.exe -B monitor\configure.py init
 .\.venv\Scripts\python.exe -B monitor\monitor.py --read-once
 ```
 
-第一次初始化只建立消息游标，不回扫旧消息。`--read-once` 不发邮件或通知，但会更新本地进度。更换群或邮箱需要停止脚本并重新核对配置；启动时固定配置，运行中逐轮校验群范围。初始化不会覆盖已有配置。
+初始化会生成被忽略的 `single-group-scope.json` 和 `mail-config.json`，**邮件默认关闭**。首次只建立读取位置，不回扫历史；`--read-once` 不发邮件或托盘通知，但会更新本地进度。返回 0 条新消息不等于已经收到并验证了真实群的新消息。
 
-## 邮件验证与启用
+## 4. 验证邮件后启用
 
-默认邮件关闭。手动生成一个新的 32 位十六进制测试 ID；下面 `<TEST_ID>` 必须替换为同一个实际 ID：
+确认用户已经授权一次合成测试邮件的发件账户和收件地址，再执行：
 
 ```powershell
-.\.venv\Scripts\python.exe -c "import uuid; print(uuid.uuid4().hex)"
-.\.venv\Scripts\python.exe -B monitor\outlook_mailer.py --test-id <TEST_ID>
-.\.venv\Scripts\python.exe -B monitor\outlook_mailer.py --test-id <TEST_ID> --submit
+$mailTestId = & .\.venv\Scripts\python.exe -c "import uuid; print(uuid.uuid4().hex)"
+.\.venv\Scripts\python.exe -B monitor\outlook_mailer.py --test-id $mailTestId
+.\.venv\Scripts\python.exe -B monitor\outlook_mailer.py --test-id $mailTestId --preflight
+.\.venv\Scripts\python.exe -B monitor\outlook_mailer.py --test-id $mailTestId --submit
 ```
 
-第一条 mailer 命令只预览；加 `--submit` 才发送一封明确标注的测试邮件。请在目标 Gmail 收件箱或垃圾邮件中确认收到，然后显式启用未来提醒：
+依次是预览、只做本地发件预检、真正发送一封标注为测试的邮件。预检不发送；`submitted: true` 只说明 Outlook 接受发送，不能证明目标邮箱收到。需要由目标邮箱的授权连接器核查，或由用户确认收件箱／垃圾邮件中收到该测试编号。
+
+收到后启用未来提醒：
 
 ```powershell
-.\.venv\Scripts\python.exe -B monitor\configure.py enable-email --test-id <TEST_ID> --confirm-gmail-received
+.\.venv\Scripts\python.exe -B monitor\configure.py enable-email --test-id $mailTestId --confirm-received
 .\.venv\Scripts\python.exe -B monitor\control.py start
+.\.venv\Scripts\python.exe -B monitor\control.py status
 ```
 
-没有 SMTP 密码或新 OAuth 凭据。Outlook 使用现有登录，会在需要发信时按需启动。遇到登录／安全提示由用户处理，程序不会自动点击或改变安全设置。只发配置的一个收件人，不加附件、抄送或密送。群消息只保留必要命中摘要，不发送整个聊天记录。
+收件人可以是 Gmail、学校邮箱等有效邮箱；发件仍通过经典 Outlook 的现有登录。没有新建 SMTP 密码或 OAuth 凭据。登录和安全提示由用户处理。只发一个配置的收件人，不加附件、抄送、密送，不从群消息中提取新的收件地址。
 
-## 日常使用和登录自启
+## 5. 日常运行和登录自启
 
-`Start.cmd`、`Stop.cmd`、`Status.cmd` 分别启动、停止、查看状态。托盘菜单可暂停、恢复、退出。`monitor/data/offers.html` 显示本地候选；`status.json` 中的 `last_success` 是最近成功轮次。
+`Start.cmd`、`Stop.cmd`、`Status.cmd` 分别启动、停止和查看状态；托盘菜单可以暂停、恢复、退出。`data/offers.html` 是本地命中列表，名称为兼容旧版保留。
 
-正常每 15 秒读取，暂时读取失败每 30 秒重试。明确未发送的临时邮箱故障每 5 分钟重试；不确定是否已发送时暂停邮件队列，避免重复。首次登录启动最多尝试 6 次；用户后续主动退出监控不会被该启动器强制拉回。
+正常每 15 秒读取；读取暂时失败每 30 秒重试。相同事件 72 小时内合并，规则配置变化会影响去重和待发邮件校验。修改群、规则或邮箱前先停止并核对待发状态，修改后重新验收，不直接改真实队列。
 
-先预览当前用户登录启动项，再按需加 `-Apply`：
+邮件队列独立于托盘显示状态：明确未发送的临时故障每 5 分钟重试；已提交不自动重发；`uncertain` 或 `blocked` 会暂停新邮件，需要核对结果。脚本当前会在源读取成功的轮次推进邮件队列，微信读取持续失败也会延后发信重试。
+
+登录自启先预览，再按用户需要应用：
 
 ```powershell
 .\monitor\configure_monitor_startup.ps1
@@ -72,33 +120,10 @@ Copy-Item monitor\credentials.example.env monitor\credentials.local.env
 .\monitor\configure_app_startup.ps1 -OutlookExe 'C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE' -WeixinExe 'C:\REPLACE_WITH_YOUR_PATH\Weixin.exe'
 ```
 
-最后一条同样加 `-Apply` 才写入微信和 Outlook 的启动快捷方式。只操作当前用户 Startup 文件夹，遇到同名无关项停止，不修改安全设置，不安装服务或重启电脑。快捷方式绑定此仓库及 `.venv` 路径，移动后需重新配置。微信可能仍需手机确认登录。
+最后一条加 `-Apply` 才写微信和 Outlook 启动项。仅操作当前用户 Startup 文件夹；同名无关项不会覆盖，不安装系统服务、不修改安全设置、不要求重启。首次启动最多尝试 6 次；用户随后主动退出不会被启动器强行拉回。微信可能仍需手机确认登录。
 
-## 测试
+## 验收与排障
 
-```powershell
-.\.venv\Scripts\python.exe -B -m unittest discover -s monitor -p 'test_*.py' -v
-```
+验收应确认：`running=true`、`state=monitoring`、`last_success` 连续推进、群哈希和 `rule_profile` 正确；实际收到测试邮件；队列没有 `uncertain`／`blocked`；预期规则确实产生合成命中。登录启动的快捷方式回读只能证明配置已写入，不能证明已完成重启测试。
 
-合成单元测试不读取真实微信、不发送邮件。开发时已验证边界价格、关键词特殊字、事务回滚、游标恢复、队列去重、Outlook 关闭后的恢复及登录启动条件。发布副本另验证配置脱敏与未配置时拒绝运行。
-
-`future_delivery_e2e.py prepare` 只创建隔离的合成测试状态；实际 `execute` 必须额外给出 `--allow-outlook-close --send-test`，会检查没有打开的撰写窗口、内联回复、发件箱或前台 Outlook 后正常退出 Outlook，再真正发送测试邮件。此测试需先暂停监控并由操作者明确同意，不能作为无副作用的单元测试运行。Gmail 到达需单独核验。
-
-## 实现
-
-```mermaid
-flowchart LR
-    A[微信加密消息库] --> B[内存只读快照]
-    B --> C[固定群增量文字消息]
-    C --> D[规则筛选与72小时去重]
-    D --> E[Windows通知]
-    D --> F[SQLite邮件队列]
-    F --> G[经典Outlook]
-    G --> H[配置的Gmail]
-```
-
-`monitor.py` 负责增量读取、范围校验和主循环；`deals.py` 解析规则；`state.py` 事务性保存游标、消息去重和候选；`email_queue.py` 独立保存邮件结果；`outlook_mailer.py` 再次核验群、规则、地址后发送；`outlook_session.py` 处理应用恢复；`startup.py` 处理登录启动。
-
-消息库的解密数据只驻留内存，不创建完整明文数据库缓存。源读取和游标提交失败时不会跳过未读批次。相同候选 72 小时内合并，必要候选及消息哈希按 30 天策略清理。本地配置、密钥、队列、候选、测试实发报告均被 `.gitignore` 排除。
-
-电脑关闭、休眠、微信没有同步、密钥失效、邮箱登录过期、网络中断或 Gmail 过滤都会影响时效。此项目不保证永不漏报，不自动购买、核实到手价或替用户作购买决定。
+常见问题及诊断顺序见 [agent 部署指南](../docs/AGENT_DEPLOYMENT.md#故障处理)。电脑关机、休眠、微信未同步、密钥失效、邮箱登录过期、网络或收件过滤都可能延迟提醒。本项目当前只处理一个群的文字，不承诺跨版本兼容或永不漏报。

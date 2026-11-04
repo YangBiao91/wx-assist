@@ -49,7 +49,7 @@ class Notifier:
         menu = Menu(MenuItem("查看优惠候选", lambda icon, item: self.open_report(), default=True),
                     MenuItem(lambda item: "恢复监控" if paused.is_set() else "暂停监控", self.toggle),
                     MenuItem("退出监控", self.exit))
-        self.icon = ObservedIcon("protein_deals_local", image, "指定群 · 蛋白粉优惠", menu)
+        self.icon = ObservedIcon("protein_deals_local", image, "指定群 · 群聊优惠", menu)
         self.icon.balloon_clicked = self.open_report
 
     def open_report(self):

@@ -1,4 +1,5 @@
-# Windows CPython 3.13; pinned wheels and SHA256 from the local audited build.
+# Windows x64 CPython 3.12; official PyPI hashes verified against local wheel bytes.
+--only-binary=:all:
 pillow==13.0.0 --hash=sha256:ff3fe9eb621fbb9db4c4be33ab946f6bac5f98ab50ca8d3260503653656c961b
 psutil==7.2.2 --hash=sha256:eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988
 pycryptodome==4.3.0 --hash=sha256:195c9d781905605b3b9de8567c47986a9d0ee513566b5150eb9400692465b610

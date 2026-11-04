@@ -307,5 +307,16 @@ class Boundaries(unittest.TestCase):
         monitor.guard("open", ("synthetic", "w", 0))
 
 
+# Exercise the legacy example profile explicitly; the deployed default is generic.
+def setUpModule():
+    import settings
+    global profile_patch
+    profile_patch=patch.dict(settings.SETTINGS,{"rule_profile":"protein_deals"})
+    profile_patch.start()
+
+def tearDownModule():
+    profile_patch.stop()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

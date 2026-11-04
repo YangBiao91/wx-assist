@@ -19,6 +19,7 @@ import monitor
 from outlook_mailer import build_offer_mail,SENDER,RECIPIENT
 from outlook_session import connect_outlook,running_outlook
 from state import State
+from settings import SETTINGS
 
 ROOT=Path(__file__).resolve().parent
 RUNS=ROOT/"e2e-runs"
@@ -67,7 +68,15 @@ def prepare():
         # the production monitor never scans jobs outside its own SQLite outbox.
         with state.db:
             state.db.execute("INSERT OR REPLACE INTO meta VALUES('offer_sequence',?)",(str(900000000000+int(run_id[:8],16)),))
-        text=f"合成测试：超好忦，仅验证未来提醒链路，不是真实优惠。测试编号 {run_id}"
+        if SETTINGS.get("rule_profile","generic")=="generic":
+            from generic_rules import load_rules
+            enabled=[rule for rule in load_rules() if rule["enabled"]]
+            if not enabled:
+                raise RuntimeError("an_enabled_generic_rule_is_required")
+            term=enabled[0]["any_keywords"][0]
+        else:
+            term="超好忦"
+        text=f"合成测试：{term}，仅验证未来提醒链路，不是真实群通知。测试编号 {run_id}"
         rows=[(1,1,1,int(now),text),(2,2,1,int(now),text)]
         result=monitor.process_cycle(state,SyntheticSource(rows),now)
         assert state.counts()["offers"]==1
@@ -174,7 +183,7 @@ def execute(run_id):
         attempts=state.db.execute("SELECT attempts FROM email_outbox").fetchone()[0]
         assert len(calls)==1 and attempts==1
         assert after_restart["email_submitted"]==after_duplicate["email_submitted"]==1
-        report.update(phase="awaiting_gmail_receipt",dedup_verified=True,reopened_state_verified=True,
+        report.update(phase="awaiting_mailbox_receipt",dedup_verified=True,reopened_state_verified=True,
                       transport_invocations=1,send_attempt_count=attempts,
                       outlook_running_after_send=bool(running_outlook()))
         save(path/"report.json",report)

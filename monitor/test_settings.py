@@ -30,7 +30,7 @@ class Configuration(unittest.TestCase):
                     settings.validate_runtime_settings(path)
 
     def test_enable_email_requires_explicit_delivery_confirmation(self):
-        with self.assertRaisesRegex(ValueError,'explicit_gmail'):
+        with self.assertRaisesRegex(ValueError,'explicit_receipt'):
             configure.enable_email('a'*32,False)
 
     def test_setup_never_overwrites_an_existing_scope(self):

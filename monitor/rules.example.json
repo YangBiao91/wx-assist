@@ -1,0 +1,25 @@
+{
+  "rules": [
+    {
+      "id": "school-notices",
+      "name": "学校重要通知",
+      "enabled": false,
+      "any_keywords": ["考试安排", "报名截止", "提交材料", "停课通知"],
+      "exclude_keywords": ["测试消息", "已取消"]
+    },
+    {
+      "id": "deal-tracking",
+      "name": "特价信息跟踪",
+      "enabled": false,
+      "any_keywords": ["超好价", "超好忦", "限时优惠", "补货"],
+      "exclude_keywords": ["已结束", "售罄"]
+    },
+    {
+      "id": "team-actions",
+      "name": "团队事项提醒",
+      "enabled": false,
+      "any_keywords": ["会议改期", "提交周报", "发布窗口"],
+      "exclude_keywords": ["演示用"]
+    }
+  ]
+}

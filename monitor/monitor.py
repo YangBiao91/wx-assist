@@ -209,12 +209,14 @@ def deliver_one(state, notifier, now=None):
         with state.db:
             state.db.execute("UPDATE offers SET delivery=? WHERE id=?", ("expired" if data.get("expiry_ts") is not None and data["expiry_ts"]<=now else "needs_review", row["id"]))
         return None
-    if data.get("trigger_kind","price")=="keyword":
+    if data.get("trigger_kind")=="rule":
+        message="规则："+data["rule_name"]+"\n"+data["keyword_excerpt"][:180]
+    elif data.get("trigger_kind","price")=="keyword":
         message="关键词："+"、".join(data["matched_keywords"])+"\n"+data["title"][:75]+"\n"+data["keyword_excerpt"][:100]
     else:
         prices = " / ".join(f"¥{p:g}" for p in data["prices_yuan"]) or "报价待确认"
         message = f"{data['brand']} 5磅 {prices} < ¥{data['threshold_yuan']}\n"+data["title"][:75]+"\n群内报价未核价；点击查看条件与截止时间"
-    title="指定群 · 关键词提醒" if data.get("trigger_kind","price")=="keyword" else "指定群 · 蛋白粉优惠候选"
+    title="群聊监控 · "+data["rule_name"] if data.get("trigger_kind")=="rule" else "群聊监控 · 关键词提醒" if data.get("trigger_kind","price")=="keyword" else "群聊监控 · 价格示例"
     shown = notifier.send(title, message)
     state.delivered(row["id"], shown, now)
     return shown
@@ -224,8 +226,15 @@ def write_status(values):
     values.update(updated_at=time.time(), pid=__import__('os').getpid(),
                   group_id_sha256=PINNED_GROUP_SHA256, external_transport=values.get("email_enabled",False),
                   auto_send=False, ai=False, credential_extraction=False)
+    values["rule_profile"] = SETTINGS.get("rule_profile","generic")
     values["rules"] = {"ON":{"pounds":5,"price_cny_lt":580},"熊猫":{"pounds":5,"price_cny_lt":400},
                        "keyword":{"terms":list(KEYWORD_FORMS),"any_brand_or_price":True}}
+    if values["rule_profile"]=="generic":
+        from generic_rules import load_rules
+        try:
+            values["rules"]={"enabled_rule_ids":[r["id"] for r in load_rules() if r["enabled"]]}
+        except (OSError,ValueError):
+            values["rules"]={"error":"invalid_local_rules"}
     tmp = DATA / "status.tmp"
     tmp.write_text(json.dumps(values, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(DATA / "status.json")
@@ -253,6 +262,8 @@ def safe_error(exc):
     value = str(exc)
     if value in safe:
         return value
+    if isinstance(exc,ValueError) and str(exc).startswith(("rules_","invalid_rule","unique_rule_","positive_keywords_","explicit_rule_")):
+        return "rule_configuration_invalid"
     if isinstance(exc, (sqlite3.Error, ValueError)):
         return "database_or_credential_unavailable"
     return "local_read_temporarily_unavailable"

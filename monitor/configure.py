@@ -29,7 +29,7 @@ def initialize():
 
 def enable_email(test_id,confirmed):
     if not confirmed or not re.fullmatch(r'[0-9a-f]{32}',test_id or ''):
-        raise ValueError('test_id_and_explicit_gmail_receipt_confirmation_required')
+        raise ValueError('test_id_and_explicit_receipt_confirmation_required')
     settings=validate_runtime_settings()
     result=json.loads((ROOT/'data'/('email-test-'+test_id+'.json')).read_text(encoding='utf-8'))
     if not result.get('submitted') or not result.get('send_attempted'):
@@ -41,16 +41,16 @@ def enable_email(test_id,confirmed):
             raise ValueError('test_route_does_not_match_local_settings')
     config.update(enabled=True,enabled_since=config.get('enabled_since') or time.time())
     save(path,config)
-    return {'email_enabled':True,'gmail_receipt_confirmed_by_user':True,'mail_sent':False}
+    return {'email_enabled':True,'receipt_confirmed_by_user':True,'mail_sent':False}
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('action',choices=('init','enable-email'))
     parser.add_argument('--test-id')
-    parser.add_argument('--confirm-gmail-received',action='store_true')
+    parser.add_argument('--confirm-received','--confirm-gmail-received',dest='confirm_received',action='store_true')
     args=parser.parse_args()
     try:
-        result=initialize() if args.action=='init' else enable_email(args.test_id,args.confirm_gmail_received)
+        result=initialize() if args.action=='init' else enable_email(args.test_id,args.confirm_received)
         (ROOT/'data').mkdir(exist_ok=True)
         print(json.dumps(result))
     except (OSError,ValueError,KeyError) as exc:

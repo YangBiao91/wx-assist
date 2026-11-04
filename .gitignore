@@ -102,6 +102,7 @@ wx-assist_no_rag.exe
 /.venv/
 /single-group-scope.json
 /monitor/settings.local.json
+/monitor/rules.local.json
 /monitor/credentials.local.env
 /monitor/mail-config.json
 /monitor/data/
@@ -109,3 +110,10 @@ wx-assist_no_rag.exe
 /monitor/synthetic-tests/
 /monitor/*-result.json
 /monitor/*-report.json
+
+# Publish only the reviewed deployment documentation in this ignored directory.
+!/docs/
+/docs/*
+!/docs/AGENT_DEPLOYMENT.md
+!/docs/EXAMPLES.md
+!/docs/REPOSITORY_ABOUT.md

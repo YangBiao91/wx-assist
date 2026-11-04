@@ -36,6 +36,9 @@ class Offer:
     trigger_kind: str = "price"
     matched_keywords: list = field(default_factory=list)
     keyword_excerpt: str = ""
+    rule_id: str = ""
+    rule_name: str = ""
+    rule_signature: str = ""
 
     def data(self):
         return asdict(self)

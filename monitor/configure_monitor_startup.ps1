@@ -6,7 +6,7 @@ if(-not $startup.StartsWith($profileRoot,[StringComparison]::OrdinalIgnoreCase))
 $pythonw=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\.venv\Scripts\pythonw.exe'))
 $entry=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'startup.py'))
 foreach($file in @($pythonw,$entry)){if(-not [IO.File]::Exists($file)){throw "Required file missing: $file"}}
-$name='Protein Deals Monitor.lnk'
+$name='Group Chat Monitor.lnk'
 $path=[IO.Path]::GetFullPath((Join-Path $startup $name))
 if([IO.Path]::GetDirectoryName($path) -ne $startup){throw 'Shortcut is outside the intended startup folder.'}
 $arguments='-B "'+$entry+'"'
@@ -26,7 +26,7 @@ if($Apply -and -not $exists){
     $link.WorkingDirectory=$PSScriptRoot
     $link.WindowStyle=7
     $link.IconLocation=$pythonw+',0'
-    $link.Description='Start the authorized single-group protein deal monitor at this Windows user sign-in.'
+    $link.Description='Start the authorized single-group group chat monitor at this Windows user sign-in.'
     $link.Save()
 }
 $verified=$false

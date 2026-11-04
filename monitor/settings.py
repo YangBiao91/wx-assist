@@ -8,6 +8,7 @@ ROOT=Path(__file__).resolve().parent
 SETTINGS_FILE=ROOT/'settings.local.json'
 CREDENTIAL_FILE=ROOT/'credentials.local.env'
 DEFAULTS={
+    'rule_profile':'generic',
     'chat_id':'example@chatroom',
     'sender':'sender@example.invalid',
     'recipient':'recipient@example.invalid',
@@ -41,4 +42,10 @@ def validate_runtime_settings(path=SETTINGS_FILE):
     executable=Path(value['outlook_exe'])
     if not executable.is_absolute() or executable.name.lower()!='outlook.exe':
         raise ValueError('absolute_classic_outlook_executable_required')
+    if value.get('rule_profile') not in {'generic','protein_deals'}:
+        raise ValueError('unknown_rule_profile')
+    if value['rule_profile']=='generic':
+        from generic_rules import load_rules
+        if not any(rule['enabled'] for rule in load_rules()):
+            raise ValueError('at_least_one_explicit_enabled_rule_required')
     return value

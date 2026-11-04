@@ -6,7 +6,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from deals import extract
+from matcher import extract
 
 
 class State:
@@ -94,31 +94,30 @@ class State:
                 "needs_review": self.db.execute("SELECT COUNT(*) FROM offers WHERE delivery='needs_review'").fetchone()[0]}
 
     def render(self, path, status):
-        escape = html.escape
-        cards = []
+        escape=html.escape
+        cards=[]
         for row in self.db.execute("SELECT * FROM offers ORDER BY id DESC LIMIT 100"):
-            data = json.loads(row["data"])
-            price = " / ".join(f"¥{p:g}" for p in data["prices_yuan"]) or "价格待确认"
-            if data.get("trigger_kind","price")=="keyword":
-                price="关键词命中："+"、".join(data.get("matched_keywords",[]))+"；未按价格门槛判定"
-            unit = f"，约 ¥{data['yuan_per_kg']:g}/kg（单件标称重量）" if data["yuan_per_kg"] else ""
-            conditions = "、".join(data["conditions"]) or "未识别到明确门槛，请回群确认"
-            match = {"matched":"规则命中（群内报价未核价）","needs_review":"待核，不触发达标提醒","expired":"文字注明已过期，不触发提醒"}.get(data.get("match_status"),"待核")
-            if data.get("trigger_kind","price")=="keyword":
-                match="关键词提及提醒"
-            detail = "；".join(data.get("reasons",[]))
-            if data.get("keyword_excerpt"):
-                detail=data["keyword_excerpt"]
-            # A clickable public product URL is presented only after a user opens this local file.
-            link = f'<a rel="noreferrer noopener" href="{escape(data["link"], quote=True)}">商品页面</a>' if data["link"] else "请到指定群查看原消息和下单条件"
-            delivery = {"shown":"已显示通知","pending":"通知待显示","needs_review":"待核未提醒","expired":"已过期"}.get(row["delivery"],"待核")
-            cards.append(f'<article><h2>{escape(data["title"])}</h2><p>{escape(match)}</p><p>{escape(price+unit)}</p><p>条件：{escape(conditions)}</p><p>截止：{escape(data.get("expiry_label","未说明"))}</p><p>{escape(detail)}</p><p>{link}</p><small>{time.strftime("%m-%d %H:%M",time.localtime(row["source_ts"]))} · 重复 {row["occurrences"]} 次 · {escape(delivery)}</small></article>')
-        content = ('<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'">'
-                   '<title>指定群 · 优惠与关键词提醒</title><style>body{font:16px system-ui;max-width:850px;margin:40px auto;padding:0 20px;background:#f5f6f3;color:#17352b}article{background:white;padding:20px;margin:16px 0;border-radius:12px}h2{font-size:19px}small{color:#65776d}a{color:#09694b}</style>'
-                   '<h1>优惠与关键词提醒</h1><p>价格规则：ON 单件5磅 &lt; ¥580；熊猫 单件5磅 &lt; ¥400，均为人民币。严格小于，价格或规格不明仅待核。</p><p>关键词规则：出现“超好价”“超好忦”等已配置字形即提醒，不限制品牌价格；仅表示提及该词。</p><p>只读取已确认的指定群群。群内报价未核价；请确认门槛、有效期和店铺。</p>'
-                   f'<p>状态：{escape(status)} · 刷新页面查看更新 · 托盘右键可暂停或退出</p>'
-                   + (''.join(cards) or '<article>暂无新候选。启动前的历史消息不触发提醒。</article>'))
-        target = Path(path)
-        tmp = target.with_suffix(".tmp")
-        tmp.write_text(content, encoding="utf-8")
-        tmp.replace(target)
+            data=json.loads(row["data"])
+            kind=data.get("trigger_kind","price")
+            if kind=="rule":
+                detail="规则："+data["rule_name"]+"；命中词："+"、".join(data["matched_keywords"])
+                excerpt=data["keyword_excerpt"]
+            elif kind=="keyword":
+                detail="示例规则命中："+"、".join(data.get("matched_keywords",[]))
+                excerpt=data.get("keyword_excerpt","")
+            else:
+                prices=" / ".join(f"¥{value:g}" for value in data["prices_yuan"])
+                detail=f"价格示例：{data['brand']}；报价 {prices}；状态 {data.get('match_status','')}"
+                excerpt="；".join(data.get("reasons",[])+data.get("conditions",[]))
+            label={"shown":"已显示通知","pending":"通知待显示","needs_review":"待核未通知","expired":"已过期"}.get(row["delivery"],"待核")
+            stamp=time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(row["source_ts"]))
+            cards.append(f'<article><h2>{escape(data["title"])}</h2><p>{escape(detail)}</p><p>{escape(excerpt)}</p><small>{escape(stamp)} · 重复 {row["occurrences"]} 次 · {escape(label)}</small></article>')
+        content=('<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'">'
+                 '<title>群聊自动监控与通知</title><style>body{font:16px system-ui;max-width:850px;margin:40px auto;padding:0 20px;background:#f5f6f3;color:#17352b}article{background:white;padding:20px;margin:16px 0;border-radius:12px}h2{font-size:19px}small{color:#65776d}</style>'
+                 '<h1>群聊自动监控与通知</h1><p>只处理明确配置的一个群。匹配结果请回到原群核对；文字片段不等于完整通知或事实核验。</p>'
+                 f'<p>状态：{escape(status)} · 刷新页面查看更新 · 托盘右键可暂停或退出</p>'
+                 +(''.join(cards) or '<article>暂无新命中；首次运行前的历史消息不回扫。</article>'))
+        target=Path(path)
+        temporary=target.with_suffix(".tmp")
+        temporary.write_text(content,encoding="utf-8")
+        temporary.replace(target)
