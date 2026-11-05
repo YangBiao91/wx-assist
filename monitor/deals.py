@@ -15,7 +15,12 @@ CONDITIONS = (("88VIP", r"88\s*vip"), ("会员", r"会员"), ("凑单", r"凑单
               ("临期", r"临期|短保|到期"), ("首单", r"首单|新客|新人"))
 MERCHANTS = {"item.taobao.com", "detail.tmall.com", "item.jd.com", "mobile.yangkeduo.com"}
 KEYWORD = re.compile(r"超\s*好\s*(?:[价價忦]|[讠言]\s*介)")
-MUST_BUY = re.compile(r"必\s*买")
+MUST_BUY_COUPON = re.compile(
+    r"(?<![证债])券\s*(?:[（(【\[]\s*)?"
+    r"(?:(?:是|属于|建议|推荐|强烈推荐|真的|绝对|一定|超值)\s*){0,2}(?P<after>必\s*买)"
+    r"|(?P<before>必\s*买)\s*(?:的\s*)?(?:(?:这|那|此|该)(?:张|种|个)?\s*)?"
+    r"(?:\d+(?:\.\d+)?\s*元\s*)?"
+    r"(?:优惠|预定|预订|预约|定金|代金|抵用|购物|折扣|满减|补贴|礼金)?券")
 KEYWORD_FORMS = ("超好价","超好忦","超好價","超好讠介","超好言介","必买")
 POUND_G = 453.59237
 # A price threshold belongs to one brand AND one explicit single-item size.
@@ -204,31 +209,30 @@ def keyword_matches(text):
         return []
     value=keyword_text(text)
     matches=list(dict.fromkeys(re.sub(r"\s+","",match.group()) for match in KEYWORD.finditer(value)))
-    # This independent term applies to coupon messages, not every product pitch.
-    if "券" in value and MUST_BUY.search(value):
+    if must_buy_coupon_match(value):
         matches.append("必买")
     return matches
 
 
-def coupon_excerpt(lines):
-    """Keep bounded evidence for both terms, including when on separate lines."""
-    for position,line in enumerate(lines):
-        value=keyword_text(line)
-        match=MUST_BUY.search(value)
-        if not match:
+def must_buy_coupon_match(value):
+    """Recognize a direct recommendation of the coupon itself."""
+    for match in MUST_BUY_COUPON.finditer(value):
+        buy_start=match.start("after") if match.group("after") else match.start("before")
+        prefix=value[max(0,buy_start-12):buy_start]
+        if re.search(r"(?:不是|并非|不算|不|非|别|勿|无需|不用|不要|没必要)\s*$",prefix):
             continue
-        excerpt=value[max(0,match.start()-60):match.end()+60]
-        if "券" not in excerpt:
-            candidates=[(abs(index-position),index,keyword_text(item))
-                        for index,item in enumerate(lines) if "券" in item]
-            if not candidates:
-                continue
-            _,index,coupon=min(candidates)
-            offset=coupon.index("券")
-            fragment=coupon[max(0,offset-35):offset+36]
-            excerpt=(fragment+"\n"+excerpt) if index<position else (excerpt+"\n"+fragment)
-        return position,excerpt[:240]
+        return match
     return None
+
+
+def coupon_excerpt(lines):
+    """Preserve the actual coupon recommendation, without joining unrelated lines."""
+    value=keyword_text("\n".join(lines))
+    match=must_buy_coupon_match(value)
+    if not match:
+        return None
+    position=value[:match.start()].count("\n")
+    return position,value[max(0,match.start()-40):match.end()+60][:240]
 
 
 def keyword_conditions(text):
@@ -255,7 +259,7 @@ def extract_keyword_offer(text,now,reference_ts):
         # A keyword on a coupon-password line is still a mention, but do not
         # retain the password or contact text removed by clean().
         title="群消息提到必买券" if "必买" in matched else "群消息提到超好价"
-        excerpt="命中关键词："+"、".join(matched)+("（券类消息）" if "必买" in matched else "")
+        excerpt="命中关键词："+"、".join(matched)+("（必买的券）" if "必买" in matched else "")
     expires,label=expiry(text,reference_ts)
     if expires is not None and expires<=now:
         label+="（文字注明的截止时间已过）"

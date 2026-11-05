@@ -229,7 +229,7 @@ def write_status(values):
     values["rule_profile"] = SETTINGS.get("rule_profile","generic")
     values["rules"] = {"ON":{"pounds":5,"price_cny_lt":580},"熊猫":{"pounds":5,"price_cny_lt":400},
                        "ON_5_64":{"brand":"ON","pounds":5.64,"price_cny_lt":600},
-                       "keyword":{"terms":list(KEYWORD_FORMS),"coupon_only_terms":["必买"],"any_brand_or_price":True}}
+                       "keyword":{"terms":list(KEYWORD_FORMS),"coupon_only_terms":["必买"],"coupon_match":"explicit_must_buy_recommendation","any_brand_or_price":True}}
     if values["rule_profile"]=="generic":
         from generic_rules import load_rules
         try:
