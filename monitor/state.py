@@ -107,7 +107,8 @@ class State:
                 excerpt=data.get("keyword_excerpt","")
             else:
                 prices=" / ".join(f"¥{value:g}" for value in data["prices_yuan"])
-                detail=f"价格示例：{data['brand']}；报价 {prices}；状态 {data.get('match_status','')}"
+                size=f"{data['pounds']:g}磅" if data.get("pounds") else "规格见摘要"
+                detail=f"价格示例：{data['brand']}；{size}；报价 {prices}；状态 {data.get('match_status','')}"
                 excerpt="；".join(data.get("reasons",[])+data.get("conditions",[]))
             label={"shown":"已显示通知","pending":"通知待显示","needs_review":"待核未通知","expired":"已过期"}.get(row["delivery"],"待核")
             stamp=time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(row["source_ts"]))

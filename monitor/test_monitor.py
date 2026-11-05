@@ -114,8 +114,8 @@ class Parsing(unittest.TestCase):
             self.assertIsNone(deals.extract(text))
         self.assertEqual(deals.extract("Optimum Nutrition Whey 5 lbs 实付CNY579").brand,"ON")
 
-    def test_size_must_be_exactly_five_pounds(self):
-        for size in ("2磅","5.64lb","10磅","1kg"):
+    def test_size_must_be_explicit_and_supported(self):
+        for size in ("2磅","5.6lb","10磅","1kg"):
             self.assertIsNone(deals.extract(f"ON乳清蛋白粉 {size} 到手199元"))
         for size in ("2.27kg","5磅+2磅","5磅×2",""):
             self.assertEqual(deals.extract(f"ON乳清蛋白粉 {size} 到手199元").match_status,"needs_review")

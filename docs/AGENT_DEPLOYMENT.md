@@ -16,7 +16,7 @@
 
 用户配合完成微信／Outlook 登录和必要授权，不需要在对话中粘贴密码或数据库密钥。Python、安装路径、内部群 ID 和配置文件由 agent 在允许范围内定位；找不到或群名有歧义时再集中询问。
 
-例如“ON 5 磅低于 580 元、熊猫 5 磅低于 400 元，出现超好价也提醒，发到我的邮箱”可以交给 agent 转成已有业务适配器，而不是要求用户先写 JSON。完整案例见 [补剂群优惠邮件提醒](EXAMPLES.md#supplement-alert-example)。
+例如“ON 5 磅低于 580 元、ON 5.64 磅低于 600 元、熊猫 5 磅低于 400 元，出现超好价也提醒，发到我的邮箱”可以交给 agent 转成已有业务适配器，而不是要求用户先写 JSON。完整案例见 [补剂群优惠邮件提醒](EXAMPLES.md#supplement-alert-example)。
 
 ## 可直接复制的任务模板
 
@@ -85,7 +85,7 @@ py -3.12 -m venv .venv
 
 复制 `monitor/rules.example.json` 为 `rules.local.json`。默认所有示例关闭，只启用用户选择的条目。当前支持：`any_keywords` 任一命中，`exclude_keywords` 任一排除，顺序决定首个命中。不支持任意正则或语义分类。
 
-以上为 `generic` 模式。如果用户明确需要[补剂群案例](EXAMPLES.md#supplement-alert-example)中的品牌、5 磅规格和价格条件，选择已有 `protein_deals` 适配器；不要把 `any_keywords` 当成价格比较表达式，也不要自动叠加两种模式。其他尚未实现的结构化条件需要先说明并实现、测试相应适配器。
+以上为 `generic` 模式。如果用户明确需要[补剂群案例](EXAMPLES.md#supplement-alert-example)中的品牌、5／5.64 磅规格和价格条件，选择已有 `protein_deals` 适配器；不要把 `any_keywords` 当成价格比较表达式，也不要自动叠加两种模式。其他尚未实现的结构化条件需要先说明并实现、测试相应适配器。
 
 使用 `preview_rules.py --text` 测用户认可的**合成**正例、排除例和无关例。记录期望值与实际结果；不把真实群记录当测试夹具上传。不同场景示例见 [EXAMPLES.md](EXAMPLES.md)。
 

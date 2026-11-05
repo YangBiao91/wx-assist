@@ -16,6 +16,9 @@ CONDITIONS = (("88VIP", r"88\s*vip"), ("会员", r"会员"), ("凑单", r"凑单
 MERCHANTS = {"item.taobao.com", "detail.tmall.com", "item.jd.com", "mobile.yangkeduo.com"}
 KEYWORD = re.compile(r"超\s*好\s*(?:[价價忦]|[讠言]\s*介)")
 KEYWORD_FORMS = ("超好价","超好忦","超好價","超好讠介","超好言介")
+POUND_G = 453.59237
+# A price threshold belongs to one brand AND one explicit single-item size.
+PRICE_RULES = {("ON", 5.0): 580, ("ON", 5.64): 600, ("熊猫", 5.0): 400}
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class Offer:
     rule_id: str = ""
     rule_name: str = ""
     rule_signature: str = ""
+    pounds: float | None = None
 
     def data(self):
         return asdict(self)
@@ -119,7 +123,6 @@ def extract_price_offer(text, now=None, reference_ts=None):
     if not brands:
         return None
     brand = brands[0] if len(brands)==1 else "品牌待核"
-    threshold = {"ON":580, "熊猫":400}.get(brand)
     title = products[0][:120]
     reasons = [] if len(brands)==1 else ["同条消息含多个目标品牌，价格对应关系待核"]
     number = r"(?<![0-9.])[0-9]+(?:\.[0-9]{1,2})?(?![0-9.])"
@@ -152,17 +155,20 @@ def extract_price_offer(text, now=None, reference_ts=None):
     for number, unit in re.findall(r"(\d+(?:\.\d+)?)\s*(公斤|千克|kg|克|g|磅|lbs?)(?![A-Za-z])", text, re.I):
         unit = unit.lower()
         value = float(number)
-        weights.append(round(value * (1000 if unit in {"公斤", "千克", "kg"} else 453.59237 if unit in {"磅", "lb", "lbs"} else 1), 2))
+        weights.append(round(value * (1000 if unit in {"公斤", "千克", "kg"} else POUND_G if unit in {"磅", "lb", "lbs"} else 1), 2))
         if unit in {"磅", "lb", "lbs"}:
             pounds.append(value)
     weights = sorted({w for w in weights if 50 <= w <= 25_000})
-    if pounds and 5 not in pounds:
+    allowed_sizes = {size for (target, size) in PRICE_RULES if target == brand or len(brands) > 1}
+    if pounds and not allowed_sizes.intersection(pounds):
         return None
-    if not pounds and weights and not any(2200 <= w <= 2400 for w in weights):
+    if not pounds and weights and not any(abs(w - size * POUND_G) <= 150 for w in weights for size in allowed_sizes):
         return None
+    selected_pounds = pounds[0] if len(set(pounds)) == 1 and pounds[0] in allowed_sizes else None
+    threshold = PRICE_RULES.get((brand, selected_pounds))
     multiple = bool(re.search(r"(?:[×*xX]\s*(?:[2-9]|\d{2,})|[2-9]\s*[桶罐袋盒包件]|[两二三四五六七八九十双]\s*[桶罐袋盒包件]|买\d|送\d)", text))
-    if set(pounds) != {5} or len(weights) != 1 or multiple:
-        reasons.append("未明确为单件5磅规格或存在多个规格")
+    if selected_pounds is None or len(weights) != 1 or multiple:
+        reasons.append("未明确为该品牌支持的单件磅数规格或存在多个规格")
     weight = weights[0] if len(weights) == 1 and not multiple else None
     unit_price = round(prices[0] * 1000 / weight, 2) if weight and len(prices) == 1 else None
     conditions = [name for name, pattern in CONDITIONS if re.search(pattern, text, re.I)]
@@ -173,7 +179,7 @@ def extract_price_offer(text, now=None, reference_ts=None):
         status = "expired"
         reasons.append("消息注明的优惠截止时间已过")
     # An unambiguous price that is at or above every possible threshold is irrelevant.
-    limit = threshold if threshold is not None else 580
+    limit = threshold if threshold is not None else max(PRICE_RULES.values())
     if prices and min(prices) >= limit and all(currency for _,currency in records):
         return None
     if expiry_label == "文字日期无效，待核":
@@ -183,7 +189,8 @@ def extract_price_offer(text, now=None, reference_ts=None):
     signature = repr((normalized, prices, weight, conditions, link, brand, status, expires))
     fingerprint = hashlib.sha256(signature.encode()).hexdigest()
     return Offer(title, prices, weight, unit_price, conditions, link, fingerprint,
-                 brand, threshold, status, sorted(set(reasons)), expires, expiry_label)
+                 brand, threshold, status, sorted(set(reasons)), expires, expiry_label,
+                 pounds=selected_pounds)
 
 
 def keyword_matches(text):
@@ -227,7 +234,7 @@ def extract_keyword_offer(text,now,reference_ts):
     canonical=lambda value: re.sub(r"[\W_]+","",KEYWORD.sub("超好价",unicodedata.normalize("NFKC",value)).lower())
     signature=repr(("keyword:超好价",canonical(title),canonical(excerpt),conditions,link,label))
     fingerprint=hashlib.sha256(signature.encode()).hexdigest()
-    # A keyword mention is not a claim that the offer meets either price rule.
+    # A keyword mention is not a claim that the offer meets a price rule.
     # Even uncertain/expired quoted deals trigger the explicit mention rule,
     # with validity described in the notification instead of silently filtered.
     return Offer(title,[],None,None,conditions,link,fingerprint,"关键词提醒",None,

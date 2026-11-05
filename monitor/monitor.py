@@ -215,7 +215,7 @@ def deliver_one(state, notifier, now=None):
         message="关键词："+"、".join(data["matched_keywords"])+"\n"+data["title"][:75]+"\n"+data["keyword_excerpt"][:100]
     else:
         prices = " / ".join(f"¥{p:g}" for p in data["prices_yuan"]) or "报价待确认"
-        message = f"{data['brand']} 5磅 {prices} < ¥{data['threshold_yuan']}\n"+data["title"][:75]+"\n群内报价未核价；点击查看条件与截止时间"
+        message = f"{data['brand']} {data.get('pounds') or 5:g}磅 {prices} < ¥{data['threshold_yuan']}\n"+data["title"][:75]+"\n群内报价未核价；点击查看条件与截止时间"
     title="群聊监控 · "+data["rule_name"] if data.get("trigger_kind")=="rule" else "群聊监控 · 关键词提醒" if data.get("trigger_kind","price")=="keyword" else "群聊监控 · 价格示例"
     shown = notifier.send(title, message)
     state.delivered(row["id"], shown, now)
@@ -228,6 +228,7 @@ def write_status(values):
                   auto_send=False, ai=False, credential_extraction=False)
     values["rule_profile"] = SETTINGS.get("rule_profile","generic")
     values["rules"] = {"ON":{"pounds":5,"price_cny_lt":580},"熊猫":{"pounds":5,"price_cny_lt":400},
+                       "ON_5_64":{"brand":"ON","pounds":5.64,"price_cny_lt":600},
                        "keyword":{"terms":list(KEYWORD_FORMS),"any_brand_or_price":True}}
     if values["rule_profile"]=="generic":
         from generic_rules import load_rules

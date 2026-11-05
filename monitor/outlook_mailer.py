@@ -10,7 +10,7 @@ import re
 import time
 from pathlib import Path
 
-from deals import public_link,keyword_matches,KEYWORD_FORMS
+from deals import public_link,keyword_matches,KEYWORD_FORMS,PRICE_RULES,POUND_G
 from outlook_session import connect_outlook
 
 ROOT = Path(__file__).resolve().parent
@@ -35,12 +35,17 @@ def _build_offer_mail(job, now=None):
         return build_keyword_mail(job)
     if data.get("trigger_kind","price")!="price":
         raise ValueError("unknown_alert_trigger")
-    threshold = {"ON":580,"熊猫":400}.get(data.get("brand"))
+    pounds = data.get("pounds")
+    # Existing persisted 5-lb jobs predate the explicit size field. No other
+    # size may be inferred from grams alone when validating an email job.
+    if pounds is None and type(data.get("weight_g")) in {int,float} and abs(data["weight_g"]-2267.96)<=0.02:
+        pounds = 5.0
+    threshold = PRICE_RULES.get((data.get("brand"), pounds)) if type(pounds) in {int,float} else None
     prices = data.get("prices_yuan",[])
     if (threshold is None or data.get("threshold_yuan")!=threshold or
         data.get("match_status")!="matched" or data.get("reasons") or
         len(prices)!=1 or type(prices[0]) not in {int,float} or not 1<=prices[0]<threshold or
-        type(data.get("weight_g")) not in {int,float} or abs(data["weight_g"]-2267.96)>0.02):
+        type(data.get("weight_g")) not in {int,float} or not abs(data["weight_g"]-pounds*POUND_G)<=0.02):
         raise ValueError("offer_does_not_match_rules")
     if data.get("expiry_ts") is not None and data["expiry_ts"]<=now:
         raise ValueError("offer_expired")
@@ -50,9 +55,9 @@ def _build_offer_mail(job, now=None):
     link = str(data.get("link",""))
     if link and public_link(link)!=link:
         raise ValueError("non_public_product_link")
-    subject = f"[蛋白粉提醒] {data['brand']} 5磅 ¥{price:g}（低于¥{threshold}）"
+    subject = f"[蛋白粉提醒] {data['brand']} {pounds:g}磅 ¥{price:g}（低于¥{threshold}）"
     body = (f"在已授权的指定群中发现符合价格规则的群内报价：\n\n"
-            f"品牌：{data['brand']}\n规格：单件5磅\n群内报价：人民币 {price:g} 元\n"
+            f"品牌：{data['brand']}\n规格：单件{pounds:g}磅\n群内报价：人民币 {price:g} 元\n"
             f"你的规则：严格低于 {threshold} 元\n商品摘要：{title}\n"
             f"条件：{conditions}\n优惠截止：{str(data.get('expiry_label','未说明'))[:80]}\n"
             f"消息时间：{time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(int(job['source_ts'])))}（电脑本地时间）\n"
